@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SITTA UT - Sistem Pemesanan & Distribusi Bahan Ajar</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header Aplikasi -->
+    <header class="app-header">
+      <div class="container header-inner">
+	<div class="brand">
+	  <img
+	    src="assets/img/logo_ut.png"
+	    alt="Logo Universitas Terbuka"
+	    class="brand-logo"
+	  />
+	  <div>
+	    <h1>SITTA — Universitas Terbuka</h1>
+	    <p class="subtitle">Sistem Informasi Tiras &amp; Transaksi Bahan Ajar</p>
+	  </div>
+	</div>
+        <nav class="main-nav" aria-label="Navigasi Utama">
+          <button
+            type="button"
+            class="nav-btn"
+            :class="{ active: tab === 'stok' }"
+            @click="tab = 'stok'"
+          >
+            📦 Stok Bahan Ajar
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            :class="{ active: tab === 'tracking' }"
+            @click="tab = 'tracking'"
+          >
+            🚚 Tracking DO
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            :class="{ active: tab === 'order' }"
+            @click="tab = 'order'"
+          >
+            📝 Pemesanan Bahan Ajar
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Konten Utama -->
+    <main class="container main-content">
+      <div v-if="isLoading" class="loading-box">
+        Memuat data bahan ajar SITTA...
+      </div>
+
+      <template v-else>
+        <!-- Tab 1: Stok Bahan Ajar -->
+        <section v-show="tab === 'stok'">
+          <ba-stock-table
+            :items="state.stok"
+            :upbjj-list="state.upbjjList"
+            :kategori-list="state.kategoriList"
+            @request-delete="confirmDeleteStock"
+          ></ba-stock-table>
+        </section>
+
+        <!-- Tab 2: Tracking Delivery Order -->
+        <section v-show="tab === 'tracking'">
+          <do-tracking
+            :data="state.tracking"
+            :paket-list="state.paket"
+            :stok-list="state.stok"
+            @go-order="tab = 'order'"
+          ></do-tracking>
+        </section>
+
+        <!-- Tab 3: Form Pemesanan DO Baru -->
+        <section v-show="tab === 'order'">
+          <order-form
+            :paket="state.paket"
+            :ekspedisi="state.pengirimanList"
+            :stok="state.stok"
+            :tracking="state.tracking"
+            @created="handleNewDO"
+          ></order-form>
+        </section>
+      </template>
+
+      <!-- Komponen Modal Global -->
+      <app-modal ref="modal"></app-modal>
+    </main>
+
+    <footer class="app-footer">
+      <div class="container">
+        SITTA Universitas Terbuka &copy; 2026 — TUGAS 3 STSI4209 - 048677382
+      </div>
+    </footer>
+  </div>
+
+  <!-- 1. Template Status Badge -->
+  <template id="tpl-badge">
+    <span class="badge" :class="statusInfo.className">
+      <span class="badge-icon" v-text="statusInfo.icon"></span>
+      <span>{{ statusInfo.label }}</span>
+    </span>
+  </template>
+
+  <!-- 2. Template App Modal -->
+  <template id="tpl-modal">
+    <div v-show="visible" class="modal-backdrop" @click.self="close">
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h3 v-text="title"></h3>
+          <button type="button" class="btn-close" @click="close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>{{ message }}</p>
+          <p v-if="detail" class="modal-detail">{{ detail }}</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" @click="close">
+            Batal
+          </button>
+          <button type="button" class="btn btn-danger" @click="confirm">
+            Ya, Hapus Data
+          </button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- 3. Template Stok Bahan Ajar -->
+  <template id="tpl-stock">
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <h2>Daftar Stok Bahan Ajar UT-Daerah</h2>
+          <p class="text-muted">
+            Menampilkan <strong v-text="filteredStok.length"></strong> dari
+            <strong>{{ items.length }}</strong> judul bahan ajar.
+          </p>
+        </div>
+        <button type="button" class="btn btn-primary" @click="openCreateForm">
+          + Tambah Bahan Ajar
+        </button>
+      </div>
+
+      <!-- Ringkasan Status Stok -->
+      <div class="summary-grid">
+        <div class="summary-item">
+          <span class="summary-label">Total Judul</span>
+          <strong class="summary-value">{{ summary.total }}</strong>
+        </div>
+        <div class="summary-item summary-safe">
+          <span class="summary-label">Stok Aman</span>
+          <strong class="summary-value">{{ summary.aman }}</strong>
+        </div>
+        <div class="summary-item summary-warn">
+          <span class="summary-label">Stok Menipis</span>
+          <strong class="summary-value">{{ summary.menipis }}</strong>
+        </div>
+        <div class="summary-item summary-danger">
+          <span class="summary-label">Stok Kosong</span>
+          <strong class="summary-value">{{ summary.kosong }}</strong>
+        </div>
+      </div>
+
+      <!-- Notifikasi Watcher Re-order -->
+      <div v-if="watcherNotice" class="alert-info">
+        <span>ℹ️ {{ watcherNotice }}</span>
+      </div>
+
+      <!-- Form Kecil Tambah / Edit Bahan Ajar -->
+      <div v-if="showForm" class="inline-form-card">
+        <div class="inline-form-header">
+          <h3>{{ isEditMode ? 'Edit Data Bahan Ajar' : 'Tambah Data Bahan Ajar Baru' }}</h3>
+          <small class="text-muted">Tekan <strong>Enter</strong> pada kolom input untuk langsung menyimpan.</small>
+        </div>
+
+        <div class="form-grid" @keyup.enter="submitForm">
+          <div class="form-group">
+            <label>Kode Mata Kuliah *</label>
+            <input
+              type="text"
+              v-model.trim="form.kode"
+              :disabled="isEditMode"
+              placeholder="Contoh: ESPA4110"
+            />
+            <span v-if="errors.kode" class="error-text">{{ errors.kode }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Nama Mata Kuliah *</label>
+            <input
+              type="text"
+              v-model.trim="form.judul"
+              placeholder="Contoh: Pengantar Ekonomi Makro"
+            />
+            <span v-if="errors.judul" class="error-text">{{ errors.judul }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Kategori Mata Kuliah *</label>
+            <select v-model="form.kategori">
+              <option value="">-- Pilih Kategori --</option>
+              <option v-for="kat in kategoriList" :key="kat" :value="kat">
+                {{ kat }}
+              </option>
+            </select>
+            <span v-if="errors.kategori" class="error-text">{{ errors.kategori }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>UT-Daerah (UPBJJ) *</label>
+            <select v-model="form.upbjj">
+              <option value="">-- Pilih UT-Daerah --</option>
+              <option v-for="kota in upbjjList" :key="kota" :value="kota">
+                {{ kota }}
+              </option>
+            </select>
+            <span v-if="errors.upbjj" class="error-text">{{ errors.upbjj }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Lokasi Rak *</label>
+            <input
+              type="text"
+              v-model.trim="form.lokasiRak"
+              placeholder="Contoh: R1-B2"
+            />
+            <span v-if="errors.lokasiRak" class="error-text">{{ errors.lokasiRak }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Harga (Rp) *</label>
+            <input
+              type="number"
+              min="0"
+              v-model.number="form.harga"
+              placeholder="65000"
+            />
+            <span v-if="errors.harga" class="error-text">{{ errors.harga }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Jumlah Stok (buah) *</label>
+            <input
+              type="number"
+              min="0"
+              v-model.number="form.qty"
+              placeholder="20"
+            />
+            <span v-if="errors.qty" class="error-text">{{ errors.qty }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Safety Stok (buah) *</label>
+            <input
+              type="number"
+              min="0"
+              v-model.number="form.safety"
+              placeholder="10"
+            />
+            <span v-if="errors.safety" class="error-text">{{ errors.safety }}</span>
+          </div>
+
+          <div class="form-group form-group-full">
+            <label>Catatan (Mendukung tag HTML sederhana)</label>
+            <input
+              type="text"
+              v-model.trim="form.catatanHTML"
+              placeholder="Contoh: <em>Edisi terbaru 2026</em>"
+            />
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" @click="submitForm">
+            {{ isEditMode ? 'Simpan Perubahan (Enter)' : 'Simpan Data (Enter)' }}
+          </button>
+          <button type="button" class="btn btn-secondary" @click="closeForm">
+            Batal
+          </button>
+        </div>
+      </div>
+
+      <!-- Panel Filter & Sort -->
+      <div class="filter-panel">
+        <div class="filter-group">
+          <label>Filter UT-Daerah</label>
+          <select v-model="filterUpbjj">
+            <option value="">Seluruh UT-Daerah</option>
+            <option v-for="upbjj in upbjjList" :key="upbjj" :value="upbjj">
+              {{ upbjj }}
+            </option>
+          </select>
+        </div>
+
+        <!-- Dependent Option: Muncul hanya jika UT-Daerah dipilih -->
+        <div class="filter-group" v-if="filterUpbjj">
+          <label>Filter Kategori ({{ filterUpbjj }})</label>
+          <select v-model="filterKategori">
+            <option value="">Semua Kategori</option>
+            <option
+              v-for="kat in availableKategoriOptions"
+              :key="kat"
+              :value="kat"
+            >
+              {{ kat }}
+            </option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label>Urutkan Berdasarkan</label>
+          <div class="sort-row">
+            <select v-model="sortBy">
+              <option value="judul">Judul Mata Kuliah</option>
+              <option value="qty">Jumlah Stok</option>
+              <option value="harga">Harga</option>
+            </select>
+            <select v-model="sortDir">
+              <option value="asc">Naik (A-Z / Kecil-Besar)</option>
+              <option value="desc">Turun (Z-A / Besar-Kecil)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="filter-group checkbox-wrap">
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="onlyReorder" />
+            <span>Perlu Re-order (Stok &lt; Safety atau 0)</span>
+          </label>
+        </div>
+
+        <div class="filter-group reset-wrap">
+          <button type="button" class="btn btn-outline" @click="resetFilters">
+            Reset Filter
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabel Daftar Stok -->
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Kode / Nama Mata Kuliah</th>
+              <th>Kategori</th>
+              <th>UT-Daerah</th>
+              <th>Lokasi Rak</th>
+              <th class="text-right">Harga</th>
+              <th class="text-right">Stok</th>
+              <th class="text-right">Safety Stok</th>
+              <th>Status (Hover Catatan)</th>
+              <th class="text-center">Aksi</th>
+            </tr>
+          </thead>
+          <tbody v-if="filteredStok.length > 0">
+            <!-- v-for dengan zero-based number index -->
+            <tr v-for="(item, index) in filteredStok" :key="item.kode">
+              <td>{{ index + 1 }}</td>
+              <td>
+                <div class="mk-code">{{ item.kode }}</div>
+                <div class="mk-title">{{ item.judul }}</div>
+              </td>
+              <td>{{ item.kategori }}</td>
+              <td>{{ item.upbjj }}</td>
+              <td><span class="rak-tag">{{ item.lokasiRak }}</span></td>
+              <td class="text-right font-mono">{{ item.harga | rupiah }}</td>
+              <td class="text-right font-mono">{{ item.qty | satuanBuah }}</td>
+              <td class="text-right font-mono">{{ item.safety | satuanBuah }}</td>
+              <td
+                class="status-cell"
+                @mouseenter="hoveredKode = item.kode"
+                @mouseleave="hoveredKode = null"
+              >
+                <status-badge :qty="item.qty" :safety="item.safety"></status-badge>
+
+                <!-- Tooltip Preview CatatanHTML saat mouse hover -->
+                <div
+                  v-show="hoveredKode === item.kode"
+                  class="catatan-tooltip"
+                >
+                  <strong>Catatan Bahan Ajar:</strong>
+                  <div v-if="item.catatanHTML" v-html="item.catatanHTML"></div>
+                  <div v-else class="text-muted">Tidak ada catatan khusus.</div>
+                </div>
+              </td>
+              <td class="text-center action-cell">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-edit"
+                  title="Edit Bahan Ajar"
+                  @click="openEditForm(item)"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-delete"
+                  title="Hapus Bahan Ajar"
+                  @click="$emit('request-delete', item)"
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          </tbody>
+          <tbody v-else>
+            <tr>
+              <td colspan="10" class="empty-state">
+                Tidak ada data stok bahan ajar yang sesuai dengan kriteria filter.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </template>
+
+  <!-- 4. Template Tracking Delivery Order -->
+  <template id="tpl-tracking">
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <h2>Tracking Delivery Order (DO)</h2>
+          <p class="text-muted">
+            Cari berdasarkan <strong>Nomor DO</strong> atau <strong>NIM</strong>.
+            Tekan <strong>Enter</strong> untuk mencari, <strong>Esc</strong> untuk mereset.
+          </p>
+        </div>
+        <button type="button" class="btn btn-primary" @click="$emit('go-order')">
+          + Buat Delivery Order Baru
+        </button>
+      </div>
+
+      <!-- Bar Pencarian dengan Keyboard Handler Enter & Esc -->
+      <div class="search-bar">
+        <input
+          type="text"
+          v-model.trim="searchInput"
+          @keyup.enter="applySearch"
+          @keyup.esc="resetSearch"
+          placeholder="Ketik Nomor DO (misal: DO2025-0001) atau NIM lalu tekan Enter..."
+        />
+        <button type="button" class="btn btn-primary" @click="applySearch">
+          Cari (Enter)
+        </button>
+        <button type="button" class="btn btn-secondary" @click="resetSearch">
+          Reset (Esc)
+        </button>
+      </div>
+
+      <!-- Hasil Tracking DO -->
+      <div v-if="filteredTrackingList.length > 0" class="do-list">
+        <div
+          v-for="(doObj, idx) in filteredTrackingList"
+          :key="idx"
+          class="do-card"
+        >
+          <!-- v-for dengan name-based index (key = nomor DO) -->
+          <div v-for="(detail, noDO) in doObj" :key="noDO">
+            <div class="do-card-header">
+              <div>
+                <span class="do-number">{{ noDO }}</span>
+                <span class="do-status-pill">{{ detail.status }}</span>
+              </div>
+              <div class="do-total">
+                Total: <strong>{{ detail.total | rupiah }}</strong>
+              </div>
+            </div>
+
+            <div class="do-meta-grid">
+              <div>
+                <small class="text-muted">Mahasiswa</small>
+                <div><strong>{{ detail.nama }}</strong> (NIM: {{ detail.nim }})</div>
+              </div>
+              <div>
+                <small class="text-muted">Ekspedisi</small>
+                <div>{{ detail.ekspedisi }}</div>
+              </div>
+              <div>
+                <small class="text-muted">Tanggal Kirim</small>
+                <div>{{ detail.tanggalKirim | formatTanggal }}</div>
+              </div>
+              <div>
+                <small class="text-muted">Paket Bahan Ajar</small>
+                <div>{{ detail.paket }} — {{ getPaketName(detail.paket) }}</div>
+              </div>
+            </div>
+
+            <!-- Timeline Perjalanan Pengiriman -->
+            <div class="timeline-box">
+              <h4>Riwayat Progress Pengiriman</h4>
+              <ul class="timeline-list">
+                <li
+                  v-for="(step, stepIdx) in detail.perjalanan"
+                  :key="stepIdx"
+                  class="timeline-item"
+                >
+                  <span class="timeline-time">{{ step.waktu }}</span>
+                  <span class="timeline-desc">{{ step.keterangan }}</span>
+                </li>
+              </ul>
+
+              <!-- Tambah Progress Perjalanan Baru -->
+              <div class="progress-form">
+                <input
+                  type="text"
+                  v-model.trim="progressInputs[noDO]"
+                  @keyup.enter="addProgress(detail, noDO)"
+                  placeholder="Tambah keterangan status perjalanan baru (tekan Enter)..."
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  @click="addProgress(detail, noDO)"
+                >
+                  + Tambah Progress
+                </button>
+              </div>
+              <span v-if="progressErrors[noDO]" class="error-text">
+                {{ progressErrors[noDO] }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="empty-state-card">
+        Data Delivery Order dengan kata kunci "<strong>{{ activeQuery }}</strong>" tidak ditemukan.
+      </div>
+    </div>
+  </template>
+
+  <!-- 5. Template Form Pemesanan DO Baru -->
+  <template id="tpl-order">
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <h2>Input Pemesanan &amp; Delivery Order (DO) Baru</h2>
+          <p class="text-muted">
+            Nomor DO dibuat otomatis berdasarkan tahun berjalan dan urutan transaksi.
+          </p>
+        </div>
+      </div>
+
+      <div v-if="successMessage" class="alert-success">
+        ✅ {{ successMessage }}
+      </div>
+
+      <form class="order-form" @submit.prevent="submitOrder">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Nomor DO (Otomatis)</label>
+            <input type="text" :value="generatedDoNumber" readonly class="readonly-input" />
+          </div>
+
+          <div class="form-group">
+            <label>NIM Mahasiswa *</label>
+            <input
+              type="text"
+              v-model.trim="form.nim"
+              placeholder="Masukkan 9 digit NIM (contoh: 041234567)"
+            />
+            <span v-if="errors.nim" class="error-text">{{ errors.nim }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Nama Lengkap Mahasiswa *</label>
+            <input
+              type="text"
+              v-model.trim="form.nama"
+              placeholder="Masukkan nama mahasiswa"
+            />
+            <span v-if="errors.nama" class="error-text">{{ errors.nama }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Ekspedisi Pengiriman *</label>
+            <select v-model="form.ekspedisi">
+              <option value="">-- Pilih Layanan Ekspedisi --</option>
+              <option
+                v-for="eks in ekspedisi"
+                :key="eks.kode"
+                :value="'JNE - ' + eks.nama"
+              >
+                JNE {{ eks.kode === 'REG' ? 'Regular' : 'Express' }} — {{ eks.nama }}
+              </option>
+            </select>
+            <span v-if="errors.ekspedisi" class="error-text">{{ errors.ekspedisi }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>Paket Bahan Ajar *</label>
+            <select v-model="form.paketKode">
+              <option value="">-- Pilih Paket Bahan Ajar --</option>
+              <option
+                v-for="pkt in paket"
+                :key="pkt.kode"
+                :value="pkt.kode"
+              >
+                {{ pkt.kode }} - {{ pkt.nama }}
+              </option>
+            </select>
+            <span v-if="errors.paketKode" class="error-text">{{ errors.paketKode }}</span>
+
+            <!-- Detail Isi Paket Muncul Setelah Paket Dipilih -->
+            <div v-if="selectedPaketObj" class="paket-preview">
+              <strong>Detail Isi {{ selectedPaketObj.nama }}:</strong>
+              <ul>
+                <li v-for="kodeMk in selectedPaketObj.isi" :key="kodeMk">
+                  <span class="mk-code">{{ kodeMk }}</span> — {{ getJudulMatkul(kodeMk) }}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Tanggal Kirim *</label>
+            <input type="date" v-model="form.tanggalKirim" />
+            <small class="text-muted" v-if="form.tanggalKirim">
+              Tampilan format: <strong>{{ form.tanggalKirim | formatTanggal }}</strong>
+            </small>
+            <span v-if="errors.tanggalKirim" class="error-text">{{ errors.tanggalKirim }}</span>
+          </div>
+
+          <div class="form-group form-group-full">
+            <div class="total-box">
+              <span>Total Harga Paket:</span>
+              <strong class="total-amount">{{ form.total | rupiah }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">
+            Simpan &amp; Buat Delivery Order
+          </button>
+          <button type="button" class="btn btn-secondary" @click="resetForm">
+            Reset Formulir
+          </button>
+        </div>
+      </form>
+    </div>
+  </template>
+
+  <!-- Scripts (Urutan pemuatan sesuai pedoman tugas) -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+  <script src="js/services/api.js"></script>
+  <script src="js/components/status-badge.js"></script>
+  <script src="js/components/app-modal.js"></script>
+  <script src="js/components/stock-table.js"></script>
+  <script src="js/components/do-tracking.js"></script>
+  <script src="js/components/order-form.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
